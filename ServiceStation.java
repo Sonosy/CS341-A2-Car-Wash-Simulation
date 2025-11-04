@@ -92,9 +92,49 @@ class Pump extends Thread {
             
             if (done) {
                 System.out.println("All cars processed; simulation ends");
-                break; 
+                System.exit(0);
             }
         }
     }
 }
 
+public class ServiceStation {
+    public static void main(String[] args) {
+
+    Scanner scanner = new Scanner(System.in);
+
+        System.out.print("Enter waiting area capacity: ");
+        int waitingAreaCapacity = scanner.nextInt();
+
+        System.out.print("Enter number of service bays (pumps): ");
+        int numPumps = scanner.nextInt();
+
+        scanner.nextLine(); 
+
+        System.out.print("Enter cars arriving (order, separated by spaces): ");
+        String[] carNames = scanner.nextLine().trim().split("\\s+");
+        int numCars = carNames.length;          
+
+        Queue<String> queue = new LinkedList<>();
+        semaphore mutex = new semaphore(1);               
+        semaphore empty = new semaphore(waitingAreaCapacity); 
+        semaphore full = new semaphore(0);                 
+
+        for (int i = 1; i <= numPumps; i++) {
+            Pump pump = new Pump(i, queue, mutex, empty, full, numCars);
+            pump.start();
+        }
+
+    for (String carName : carNames) {
+                try {
+                    Thread.sleep(0); // simulate arrival delay
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                Car car = new Car(carName, queue, mutex, empty, full);
+                car.start();
+            }
+
+    scanner.close();
+}
+}
