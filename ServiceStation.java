@@ -17,12 +17,17 @@ class semaphore {
             try {
                 wait();
             } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
         }
     }
 
-    public synchronized int getValue() {
-        return value;
+    public synchronized boolean tryP() {
+        if (value > 0) {
+            value--;
+            return true;
+        }
+        return false;
     }
 
     public synchronized void V() {
@@ -30,56 +35,70 @@ class semaphore {
         if (value <= 0)
             notify();
     }
+
 }
 
 class SharedResources {
     final Queue<Car> queue = new ArrayDeque<>();
     final int capacity;
-    final Semaphore mutex;     // binary mutex for queue access
-    final Semaphore empty;     // counts free slots in waiting area
-    final Semaphore full;      // counts cars waiting
-    final Semaphore pumps;     // counts free service bays
+    final int pumpCount;
+    final semaphore mutex; // protects queue + pump check
+    final semaphore empty; // waiting area spaces
+    final semaphore full; // cars waiting to be served
+    final semaphore pumps; // available pumps
 
     SharedResources(int capacity, int pumpCount) {
         this.capacity = capacity;
-        this.mutex = new Semaphore(1);
-        this.empty = new Semaphore(capacity);
-        this.full = new Semaphore(0);
-        this.pumps = new Semaphore(pumpCount);
+        this.mutex = new semaphore(1);
+        this.empty = new semaphore(capacity);
+        this.full = new semaphore(0);
+        this.pumps = new semaphore(pumpCount);
+        this.pumpCount = pumpCount;
     }
 }
 
 class Car extends Thread {
-    private final String name;
+    public final String name;
     final SharedResources res;
 
     Car(String name, SharedResources res) {
         this.name = name;
-        this.res = res; 
+        this.res = res;
     }
 
     public void run() {
-        System.out.println(name + " arrived");
-        res.empty.P();
-        res.mutex.P();
-        if (res.pumps.getValue() < 0 ) {
-            
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
-        res.queue.add(this);
-        System.out.println(name + " entered waiting queue");
-        res.mutex.V();
-        res.full.V();
+        System.out.println(name + " arrived");
+
+        res.mutex.P();
+        if (res.queue.isEmpty() && res.pumps.tryP()) {
+            res.queue.add(this);
+            res.mutex.V();
+            res.full.V();
+        } else {
+            res.mutex.V();
+            res.empty.P();
+            res.mutex.P();
+            res.queue.add(this);
+            System.out.println(name + " arrived and waiting");
+            res.mutex.V();
+            res.full.V();
+        }
     }
 }
 
 class Pump extends Thread {
     private final int pumpId;
     final SharedResources res;
+    private final int totalCars;
 
-    private final int totalCars; // Total cars in simulation
-
-    private static int carsServed = 0; // Shared counter
-    private static semaphore counterLock = new semaphore(1); // Protects counter
+    private static int carsServed = 0;
+    private static final semaphore counterLock = new semaphore(1);
+    private static volatile boolean simulationDone = false;
 
     Pump(int pumpId, SharedResources res, int totalCars) {
         this.pumpId = pumpId;
@@ -87,42 +106,60 @@ class Pump extends Thread {
         this.totalCars = totalCars;
     }
 
-    @Override
     public void run() {
         while (true) {
-            res.full.P(); // wait until at least one car is in the queue
-            res.mutex.P(); // lock queue to safely remove car
+            if (simulationDone)
+                return; // exit immediately if simulation ended
 
+            res.full.P(); // wait for a car
+            if (simulationDone)
+                return; // recheck after waking up
+
+            res.mutex.P();
             Car car = res.queue.poll();
-            if (car == null) {
-                res.mutex.V();
+            res.mutex.V();
+
+            if (car == null)
                 continue;
-            }
-            
-            res.pumps.P();
-            System.out.println("Pump " + pumpId + ": " + car + " login");
-            System.out.println("Pump " + pumpId + ": " + car + " begins service at Bay " + pumpId);
 
-            res.mutex.V(); // unlock queue
-            res.empty.V(); // free one waiting spot
-
-            // simulate service time
             try {
-                Thread.sleep((long) (Math.random() * 2000 + 1000));
+                Thread.sleep(250);
             } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            System.out.println("Pump " + pumpId + ": " + car.name + " Occupied");
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            System.out.println("Pump " + pumpId + ": " + car.name + " login");
+            System.out.println("Pump " + pumpId + ": " + car.name + " begins service at Bay " + pumpId);
+
+            res.empty.V();
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
             }
 
-            res.pumps.V();
-            System.out.println("Pump " + pumpId + ": " + car + " finishes service");
+            System.out.println("Pump " + pumpId + ": " + car.name + " finishes service");
             System.out.println("Pump " + pumpId + ": Bay " + pumpId + " is now free");
-            counterLock.P(); // lock before changing the counter
-            carsServed++; // increment safely
-            boolean done = (carsServed >= totalCars);
-            counterLock.V(); // unlock
 
-            if (done) {
+            res.pumps.V(); // mark pump free
+
+            counterLock.P();
+            carsServed++;
+            boolean done = (carsServed >= totalCars);
+            counterLock.V();
+
+            if (done && !simulationDone) {
+                simulationDone = true;
                 System.out.println("All cars processed; simulation ends");
-                System.exit(0);
+
+                for (int i = 0; i < res.pumpCount; i++) {
+                    res.full.V();
+                }
             }
         }
     }
@@ -130,23 +167,29 @@ class Pump extends Thread {
 
 public class ServiceStation {
     public static void main(String[] args) {
-
         Scanner scanner = new Scanner(System.in);
 
         System.out.print("Waiting area capacity: ");
         int waitingAreaCapacity = scanner.nextInt();
+        if (waitingAreaCapacity < 1) {
+            waitingAreaCapacity = 1;
+            System.out.print("Least capacity is 1. Setting to 1.\n");
+
+        }
+        if (waitingAreaCapacity > 10)
+           { waitingAreaCapacity = 10;
+            System.out.print("Maximum capacity is 10. Setting to 10.\n");}
+
 
         System.out.print("Number of service bays (pumps): ");
         int numPumps = scanner.nextInt();
 
         scanner.nextLine();
-
         System.out.print("Cars arriving (order): ");
         String[] carNames = scanner.nextLine().trim().split("\\s+");
         int numCars = carNames.length;
 
         SharedResources res = new SharedResources(waitingAreaCapacity, numPumps);
-;
 
         for (int i = 1; i <= numPumps; i++) {
             Pump pump = new Pump(i, res, numCars);
@@ -155,14 +198,14 @@ public class ServiceStation {
 
         for (String carName : carNames) {
             try {
-                Thread.sleep(0); // simulate arrival delay
+                Thread.sleep(50);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            Car car = new Car(carName, res);
-            car.start();
+            new Car(carName, res).start();
         }
 
         scanner.close();
+
     }
 }
