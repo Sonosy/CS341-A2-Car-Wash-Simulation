@@ -136,7 +136,6 @@ class Pump extends Thread {
             System.out.println("Pump " + pumpId + ": " + car.name + " login");
             System.out.println("Pump " + pumpId + ": " + car.name + " begins service at Bay " + pumpId);
 
-            res.empty.V();
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException e) {
@@ -145,8 +144,9 @@ class Pump extends Thread {
 
             System.out.println("Pump " + pumpId + ": " + car.name + " finishes service");
             System.out.println("Pump " + pumpId + ": Bay " + pumpId + " is now free");
-
+ 
             res.pumps.V(); // mark pump free
+            res.empty.V();
 
             counterLock.P();
             carsServed++;

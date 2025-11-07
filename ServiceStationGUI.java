@@ -1,9 +1,7 @@
 import javax.swing.*;
 import javax.swing.border.*;
 import java.awt.*;
-import java.awt.event.*;
 import java.util.*;
-import java.util.concurrent.*;
 
 // Semaphore class
 class semaphore {
@@ -189,8 +187,6 @@ class Pump extends Thread {
             if (res.gui != null) {
                 res.gui.logEvent("Pump " + pumpId + ": " + car.name + " begins service");
             }
-
-            res.empty.V();
             
             try {
                 Thread.sleep((long)(1000 / res.gui.getSpeedMultiplier()));
@@ -205,6 +201,8 @@ class Pump extends Thread {
             }
 
             res.pumps.V();
+            res.empty.V();
+
 
             counterLock.P();
             carsServed++;
@@ -286,7 +284,7 @@ class SimulationGUI extends JFrame {
     private JTextArea logArea;
     private JPanel pumpsPanel;
     private JPanel waitingAreaPanel;
-    private JButton startButton, pauseButton, resetButton;
+    private JButton startButton, stopButton, resetButton;
     private JSlider speedSlider;
     private JLabel speedLabel;
     private JLabel waitingCountLabel;
@@ -297,7 +295,6 @@ class SimulationGUI extends JFrame {
     private Map<Integer, PumpPanel> pumpPanels = new HashMap<>();
     
     private boolean simulationRunning = false;
-    private boolean simulationPaused = false;
     private double speedMultiplier = 1.0;
     
     // Configuration
@@ -415,16 +412,16 @@ class SimulationGUI extends JFrame {
         startButton.setFocusPainted(false);
         startButton.addActionListener(e -> startSimulation());
         
-        pauseButton = new JButton("Pause");
-        pauseButton.setFont(new Font("Arial", Font.BOLD, 14));
-        pauseButton.setBackground(new Color(255, 200, 100));
-        pauseButton.setEnabled(false);
-        pauseButton.setFocusPainted(false);
-        pauseButton.addActionListener(e -> togglePause());
+        stopButton = new JButton("Stop");
+        stopButton.setFont(new Font("Arial", Font.BOLD, 14));
+        stopButton.setBackground(new Color(255, 100, 100));
+        stopButton.setEnabled(false);
+        stopButton.setFocusPainted(false);
+        stopButton.addActionListener(e -> stopSimulation());
         
         resetButton = new JButton("Reset");
         resetButton.setFont(new Font("Arial", Font.BOLD, 14));
-        resetButton.setBackground(new Color(255, 150, 150));
+        resetButton.setBackground(new Color(255, 200, 150));
         resetButton.setFocusPainted(false);
         resetButton.addActionListener(e -> resetSimulation());
         
@@ -454,7 +451,7 @@ class SimulationGUI extends JFrame {
         speedPanel.add(speedLabel);
         
         panel.add(startButton);
-        panel.add(pauseButton);
+        panel.add(stopButton);
         panel.add(resetButton);
         panel.add(new JSeparator(SwingConstants.VERTICAL));
         panel.add(speedPanel);
@@ -525,11 +522,10 @@ class SimulationGUI extends JFrame {
         if (simulationRunning) return;
         
         simulationRunning = true;
-        simulationPaused = false;
         Pump.resetCounter();
         
         startButton.setEnabled(false);
-        pauseButton.setEnabled(true);
+        stopButton.setEnabled(true);
         
         logEvent("=== Simulation Started ===");
         
@@ -564,32 +560,23 @@ class SimulationGUI extends JFrame {
         }).start();
     }
     
-    private void togglePause() {
-        simulationPaused = !simulationPaused;
+    private void stopSimulation() {
+        if (!simulationRunning) return;
         
-        if (simulationPaused) {
-            pauseButton.setText("Resume");
-            pauseButton.setBackground(new Color(150, 255, 150));
-            logEvent("=== Simulation Paused ===");
-            
-            // Stop all threads
-            for (Car car : cars) {
-                car.stopCar();
-            }
-            for (Pump pump : pumps) {
-                pump.stopPump();
-            }
-        } else {
-            // Resume is essentially a restart from current state
-            pauseButton.setText("Pause");
-            pauseButton.setBackground(new Color(255, 200, 100));
-            logEvent("=== Simulation Resumed ===");
-            // Note: Full resume would require more complex state management
-            // For now, user should reset and restart
-            JOptionPane.showMessageDialog(this, 
-                "To continue, please Reset and Start a new simulation.",
-                "Info", JOptionPane.INFORMATION_MESSAGE);
+        logEvent("=== Simulation Stopped ===");
+        
+        // Stop all threads
+        simulationRunning = false;
+        
+        for (Car car : cars) {
+            car.stopCar();
         }
+        for (Pump pump : pumps) {
+            pump.stopPump();
+        }
+        
+        startButton.setEnabled(true);
+        stopButton.setEnabled(false);
     }
     
     private void resetSimulation() {
@@ -617,9 +604,7 @@ class SimulationGUI extends JFrame {
         updateWaitingArea();
         
         startButton.setEnabled(true);
-        pauseButton.setEnabled(false);
-        pauseButton.setText("Pause");
-        pauseButton.setBackground(new Color(255, 200, 100));
+        stopButton.setEnabled(false);
         
         logEvent("=== Simulation Reset ===");
         
@@ -676,7 +661,7 @@ class SimulationGUI extends JFrame {
     public void onSimulationComplete() {
         SwingUtilities.invokeLater(() -> {
             startButton.setEnabled(true);
-            pauseButton.setEnabled(false);
+            stopButton.setEnabled(false);
             simulationRunning = false;
             
             JOptionPane.showMessageDialog(this,
